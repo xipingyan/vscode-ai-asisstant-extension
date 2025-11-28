@@ -16,8 +16,34 @@
       {
         "command": "vscode-ai-asisstant-extension.CustomizedCoderAssistant",
         "title": "CustomizedCoderAssistant"
+      },
+      {
+        "command": "vscode-ai-asisstant-extension.generateCodeAtCursor",
+        "title": "AI: Generate Code (Prompt)",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "vscode-ai-asisstant-extension.refactorSelectedCode",
+        "title": "AI: Refactor Selected Code",
+        "icon": "$(tools)"
       }
-    ]
+    ],
+    "menus": {
+      "editorContext": [
+        {
+          "command": "vscode-ai-asisstant-extension.generateCodeAtCursor",
+          "group": "ai-code@1",
+          "when": "editorHas",
+          "title": "Ask AI to Generate Code..."
+        },
+        {
+          "command": "vscode-ai-asisstant-extension.refactorSelectedCode",
+          "group": "ai-code@2",
+          "when": "editorHasSelection",
+          "title": "Ask AI to Refactor/Analyze Selection"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
