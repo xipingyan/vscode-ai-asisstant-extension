@@ -1,21 +1,27 @@
 {
   "name": "vscode-ai-asisstant-extension",
   "displayName": "vscode_ai_asisstant_extension",
-  "description": "",
+  "description": "VS Code plugin for code generation via a local high-performance server.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.99.0"
   },
   "categories": [
+    "Programming Languages",
+    "AI",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:vscode-ai-asisstant-extension.generateCodeAtCursor",
+    "onCommand:vscode-ai-asisstant-extension.refactorSelectedCode"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "vscode-ai-asisstant-extension.CustomizedCoderAssistant",
-        "title": "CustomizedCoderAssistant"
+        "title": "CustomizedCoderAssistant",
+        "icon": "$(lightbulb-sparkle)"
       },
       {
         "command": "vscode-ai-asisstant-extension.generateCodeAtCursor",
