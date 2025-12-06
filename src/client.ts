@@ -7,9 +7,16 @@ const SERVER_PORT = 8080;
 
 // 定义服务器请求的格式
 interface RequestPayload {
-    command: 'generate' | 'edit';
+    type: 'generate' | 'edit';
     prompt: string;
+    language: string;
     context: string; // 选中的代码或整个文件的内容
+}
+
+export interface ResponsePayload {
+    status: 'success' | 'error';
+    code: string; // 生成或编辑的代码
+    message: string; 
 }
 
 /**
@@ -80,41 +87,52 @@ export class CodeGenClient {
         try {
             const socket = await this.ensureConnection();
             
-            const requestData = JSON.stringify(payload) + '\n'; // 假设以 JSON + 换行符发送
-            socket.write(requestData);
+            const requestData = JSON.stringify(payload); // 假设以 JSON 发送
+            // socket.write(requestData);
+
+            // 使用 end() 代替 write() + shutdown(SHUT_WR)
+            socket.end(requestData);
 
             return new Promise((resolve, reject) => {
                 let responseData = '';
-                // 监听一次性数据响应
+                const TIMEOUT_MS = 120000; // 120秒超时
+                // 1. 数据监听器：持续接收服务器返回的响应数据
                 const dataListener = (data: Buffer) => {
                     responseData += data.toString();
-                    
-                    // 假设服务器返回的内容以特定的结束标记 (例如：一个空行或另一个固定的分隔符) 结束
-                    // 对于 Socket 通信，最好的做法是使用固定的消息头(如：长度)或明确的结束符
-                    // 这里我们简单假设一个换行符作为结束符，但这在实际中可能需要更复杂的协议来处理流式数据。
-                    if (responseData.endsWith('\n')) {
-                        // 移除末尾的换行符
-                        const finalResponse = responseData.trim();
-                        // 移除监听器以防止后续数据干扰
-                        socket.off('data', dataListener);
-                        resolve(finalResponse);
+                };
+
+                // 2. 错误/结束处理器
+                const cleanup = (err?: Error) => {
+                    clearTimeout(timeout);
+                    socket.off('data', dataListener);
+                    // 确保错误或结束时移除其他一次性监听器
+                    socket.off('end', endListener);
+                    socket.off('error', errorListener);
+                    if (err) {
+                        reject(err);
                     }
                 };
+
+                // 3. 服务器响应完成处理器：当服务器发送 FIN 包时触发
+                const endListener = () => {
+                    cleanup();
+                    // 只有在没有错误且连接正常结束时才 resolve
+                    resolve(responseData.trim());
+                };
+
+                // 4. 错误处理器
+                const errorListener = (err: Error) => {
+                    cleanup(new Error(`Socket communication error during response: ${err.message}`));
+                };
                 
-                socket.on('data', dataListener);
-
-                // 设置超时机制
+                // 5. 超时机制
                 const timeout = setTimeout(() => {
-                    socket.off('data', dataListener);
-                    reject(new Error("Server response timed out (120s)."));
-                }, 120000); // 120秒超时
+                    cleanup(new Error(`Server response timed out (${TIMEOUT_MS/1000}s).`));
+                }, TIMEOUT_MS);
 
-                // 错误处理
-                socket.once('error', (err) => {
-                    clearTimeout(timeout);
-                    reject(new Error(`Socket communication error: ${err.message}`));
-                });
-
+                socket.on('data', dataListener);
+                socket.once('end', endListener);
+                socket.once('error', errorListener);
             });
 
         } catch (error) {

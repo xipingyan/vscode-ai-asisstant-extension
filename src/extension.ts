@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CodeGenClient } from './client';
+import { CodeGenClient, ResponsePayload } from './client';
 
 let codeGenClient: CodeGenClient;
 let outputChannel: vscode.OutputChannel;
@@ -44,17 +44,54 @@ export function activate(context: vscode.ExtensionContext) {
             try {
                 // 构造请求 payload
                 const payload = {
-                    command: 'generate' as const,
+                    type: 'generate' as const,
                     prompt: prompt,
-                    context: '' // 仅使用 prompt
+                    language: 'cpp' as const,
+                    context: 'Chosed codes for type edit.' // 仅使用 prompt
                 };
+				
+                vscode.window.showInformationMessage('Start to send:\n' + payload);
 
                 const generatedCode = await codeGenClient.sendRequest(payload);
 
-                // 插入生成的代码到光标位置
-                editor.edit(editBuilder => {
-                    editBuilder.insert(position, generatedCode + '\n');
+                // --- 核心修改：解析和处理响应 ---
+                let responsePayload: ResponsePayload;
+                try {
+                    // 1. 解析 JSON 字符串
+                    responsePayload = JSON.parse(generatedCode);
+                } catch (e) {
+                    throw new Error(`Failed to parse server response as JSON: ${e instanceof Error ? e.message : String(e)}`);
+                }
+
+                // 2. 检查 status 字段
+                if (responsePayload.status !== 'success') {
+                    // 如果状态不是 success，抛出错误并显示服务器返回的消息
+                    const errorMsg = responsePayload.message || 'Server returned an error status without a specific message.';
+                    vscode.window.showInformationMessage(errorMsg);
+                    return;
+                }
+
+                // 3. 确保代码插入操作是 await 等待的
+                const editApplied = await editor.edit(editBuilder => {
+                    editBuilder.insert(position, responsePayload.code);
                 });
+
+                // if (editApplied) {
+                //     // 2. 触发格式化命令，让 VS Code 的语言服务来处理缩进
+                //     await vscode.commands.executeCommand(
+                //         'vscode.executeFormatDocumentProvider',
+                //         editor.document.uri // 格式化当前文件
+                //     );
+                //     vscode.window.showInformationMessage('Code generation and formatting complete.');
+                // } else {
+                //     // 编辑操作失败，可能被其他操作干扰
+                //     vscode.window.showWarningMessage('Code insertion failed.');
+                // }
+
+                // // 插入生成的代码到光标位置
+                // editor.edit(editBuilder => {
+                //     editBuilder.insert(position, responsePayload.code);
+                // });
 
                 vscode.window.showInformationMessage('Code generation complete.');
 
@@ -98,8 +135,9 @@ export function activate(context: vscode.ExtensionContext) {
             try {
                 // 构造请求 payload
                 const payload = {
-                    command: 'edit' as const,
+                    type: 'edit' as const,
                     prompt: prompt,
+                    language: "cpp" as const,
                     context: selectedText // 选中的代码作为上下文
                 };
 
