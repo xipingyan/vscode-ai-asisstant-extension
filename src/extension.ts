@@ -54,10 +54,10 @@ export function activate(context: vscode.ExtensionContext) {
 
                 const generatedCode = await codeGenClient.sendRequest(payload);
 
-                // --- 核心修改：解析和处理响应 ---
+                // --- 解析和处理响应 ---
+                // 1. 解析 JSON 字符串
                 let responsePayload: ResponsePayload;
                 try {
-                    // 1. 解析 JSON 字符串
                     responsePayload = JSON.parse(generatedCode);
                 } catch (e) {
                     throw new Error(`Failed to parse server response as JSON: ${e instanceof Error ? e.message : String(e)}`);
@@ -71,27 +71,28 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                // 3. 确保代码插入操作是 await 等待的
+                const generatedCodeStr = responsePayload.code;
+                const document = editor.document;
+
+                // 3. 为每一行代码添加缩进，基于光标位置
+                // 获取光标所在行的文本
+                const currentLine = document.lineAt(position.line);
+                // 获取当前行的缩进字符串 (例如 '    ' 或 '\t\t')
+                const indentation = currentLine.text.substring(0, currentLine.firstNonWhitespaceCharacterIndex);
+                // 为生成的代码的每一行添加缩进（除了第一行，因为它将自动继承位置的缩进）
+                const indentedCode = generatedCodeStr.split('\n')
+                    .map((line, index) => {
+                        // 如果是空行或第一行，不需要添加额外的缩进
+                        if (index === 0) return line;
+                        if (line.trim().length === 0) return line;
+                        return indentation + line;
+                    })
+                    .join('\n');
+
+                // 4. 确保代码插入操作是 await 等待的
                 const editApplied = await editor.edit(editBuilder => {
-                    editBuilder.insert(position, responsePayload.code);
+                    editBuilder.insert(position, indentedCode);
                 });
-
-                // if (editApplied) {
-                //     // 2. 触发格式化命令，让 VS Code 的语言服务来处理缩进
-                //     await vscode.commands.executeCommand(
-                //         'vscode.executeFormatDocumentProvider',
-                //         editor.document.uri // 格式化当前文件
-                //     );
-                //     vscode.window.showInformationMessage('Code generation and formatting complete.');
-                // } else {
-                //     // 编辑操作失败，可能被其他操作干扰
-                //     vscode.window.showWarningMessage('Code insertion failed.');
-                // }
-
-                // // 插入生成的代码到光标位置
-                // editor.edit(editBuilder => {
-                //     editBuilder.insert(position, responsePayload.code);
-                // });
 
                 vscode.window.showInformationMessage('Code generation complete.');
 
