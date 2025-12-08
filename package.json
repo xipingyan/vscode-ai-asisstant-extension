@@ -19,11 +19,6 @@
   "contributes": {
     "commands": [
       {
-        "command": "vscode-ai-asisstant-extension.CustomizedCoderAssistant",
-        "title": "CustomizedCoderAssistant",
-        "icon": "$(lightbulb-sparkle)"
-      },
-      {
         "command": "vscode-ai-asisstant-extension.generateCodeAtCursor",
         "title": "AI: Generate Code (Prompt)",
         "icon": "$(lightbulb)"

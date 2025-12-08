@@ -5,6 +5,86 @@ let codeGenClient: CodeGenClient;
 let outputChannel: vscode.OutputChannel;
 
 /**
+ * 插入代码到编辑器，并尝试格式化该区域。
+ * @param editor 当前活动的文本编辑器
+ * @param position 插入的起始位置
+ * @param codeToInsert 待插入的原始代码字符串
+ * @param applyIndentation 是否应用手动缩进（替代自动格式化）
+ */
+async function insertAndFormatCode(
+    editor: vscode.TextEditor,
+    position: vscode.Position,
+    codeToInsert: string,
+    applyIndentation: boolean = false
+): Promise<void> {
+    const document = editor.document;
+
+    // 默认插入内容：在代码前后添加换行符，以确保它能形成一个独立的块，利于格式化。
+    let finalCode = codeToInsert;
+
+    // 如果选择手动缩进（适用于简单的代码块，或者自动格式化器不可用时）
+    if (applyIndentation) {
+        // 1. 获取当前行的缩进字符串
+        const currentLine = document.lineAt(position.line);
+        const indentation = currentLine.text.substring(0, currentLine.firstNonWhitespaceCharacterIndex);
+
+        // 2. 为生成的代码的每一行添加缩进（除了第一行）
+        const indentedLines = codeToInsert.split('\n')
+            .map((line, index) => {
+                // 第一行、空行不需要额外缩进
+                if (index === 0 || line.trim().length === 0) return line;
+                return indentation + line;
+            });
+
+        finalCode = indentedLines.join('\n');
+    }
+
+    // 记录插入前的文档版本，用于计算范围
+    const initialText = document.getText();
+    const insertOffset = document.offsetAt(position);
+
+    // 3. 执行代码插入
+    const editApplied = await editor.edit(editBuilder => {
+        editBuilder.insert(position, finalCode);
+    });
+
+    if (editApplied) {
+        // 如果没有使用手动缩进，则尝试触发 VS Code 自动格式化
+        if (!applyIndentation) {
+
+            // 4. 计算格式化范围
+            // 插入后的文本长度
+            const insertedLength = finalCode.length;
+            const insertEndOffset = insertOffset + insertedLength;
+
+            // 将 offset 转换为 Position
+            const rangeEndPosition = document.positionAt(insertEndOffset);
+
+            // 创建一个 Range，从插入代码的起始行开始，到结束行结束
+            const formatRange = new vscode.Range(
+                new vscode.Position(position.line, 0), // 从插入行的行首开始
+                new vscode.Position(rangeEndPosition.line + 1, 0) // 到插入代码结束位置的下一行行首
+            );
+
+            // 5. 触发指定范围的格式化命令
+            try {
+                // 推荐使用 executeFormatRangeProvider 对插入的范围进行格式化
+                await vscode.commands.executeCommand(
+                    'vscode.executeFormatRangeProvider',
+                    document.uri,
+                    formatRange
+                );
+            } catch (e) {
+                // 如果格式化失败（例如：当前文件语言没有格式化提供者），继续执行，但不报错
+                // outputChannel.appendLine(`Warning: Auto-formatting failed: ${e}`);
+            }
+        }
+    } else {
+        throw new Error('Code insertion failed due to a concurrent edit or other issue.');
+    }
+}
+
+/**
  * 插件激活时执行
  * @param context 
  */
@@ -71,28 +151,7 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                const generatedCodeStr = responsePayload.code;
-                const document = editor.document;
-
-                // 3. 为每一行代码添加缩进，基于光标位置
-                // 获取光标所在行的文本
-                const currentLine = document.lineAt(position.line);
-                // 获取当前行的缩进字符串 (例如 '    ' 或 '\t\t')
-                const indentation = currentLine.text.substring(0, currentLine.firstNonWhitespaceCharacterIndex);
-                // 为生成的代码的每一行添加缩进（除了第一行，因为它将自动继承位置的缩进）
-                const indentedCode = generatedCodeStr.split('\n')
-                    .map((line, index) => {
-                        // 如果是空行或第一行，不需要添加额外的缩进
-                        if (index === 0) return line;
-                        if (line.trim().length === 0) return line;
-                        return indentation + line;
-                    })
-                    .join('\n');
-
-                // 4. 确保代码插入操作是 await 等待的
-                const editApplied = await editor.edit(editBuilder => {
-                    editBuilder.insert(position, indentedCode);
-                });
+                await insertAndFormatCode(editor, position, responsePayload.code, true);
 
                 vscode.window.showInformationMessage('Code generation complete.');
 
@@ -104,7 +163,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
     
     // --- 1.2 命令：处理选中的代码 (右键菜单) ---
-    let disposableProcessSelection = vscode.commands.registerCommand('vscode-ai-asisstant-extension.generateCodeFromSelection', async () => {
+    let disposableProcessSelection = vscode.commands.registerCommand('vscode-ai-asisstant-extension.refactorSelectedCode', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             return;
@@ -144,12 +203,24 @@ export function activate(context: vscode.ExtensionContext) {
 
                 const processedCode = await codeGenClient.sendRequest(payload);
 
-                // 替换选中的代码为服务器返回的结果
-                // 这里的逻辑可以修改为：插入到选中代码的后面，或显示在新的窗口，取决于你的需求。
-                // 默认：直接替换选中内容
-                editor.edit(editBuilder => {
-                    editBuilder.replace(selection, processedCode);
-                });
+                // --- 解析和处理响应 ---
+                // 1. 解析 JSON 字符串
+                let responsePayload: ResponsePayload;
+                try {
+                    responsePayload = JSON.parse(processedCode);
+                } catch (e) {
+                    throw new Error(`Failed to parse server response as JSON: ${e instanceof Error ? e.message : String(e)}`);
+                }
+
+                // 2. 检查 status 字段
+                if (responsePayload.status !== 'success') {
+                    // 如果状态不是 success，抛出错误并显示服务器返回的消息
+                    const errorMsg = responsePayload.message || 'Server returned an error status without a specific message.';
+                    vscode.window.showInformationMessage(errorMsg);
+                    return;
+                }
+
+                await insertAndFormatCode(editor, selection.active, responsePayload.code, true);
 
                 vscode.window.showInformationMessage('Code processing complete.');
 
